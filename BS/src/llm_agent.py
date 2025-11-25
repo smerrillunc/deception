@@ -11,18 +11,19 @@ class LLMAgent:
 
     DEFAULT_SYSTEM_MSG = (
         "You are playing the game BS. Rules:\n"
-        "1. Goal: Be the first to have zero cards.\n"
-        "2. On your turn, you may play any number of cards (including 0) and declare a rank.\n"
-        "3. You may lie about the rank you declare.\n"
+        "1. Goal: Be the first player to have zero cards.\n"
+        "2. The SYSTEM sets the REQUIRED RANK each turn.\n"
+        "3. On your turn, you may play zero or more cards face-down.\n"
+        "   - You are SUPPOSED to play cards matching the required rank.\n"
+        "   - However, you are allowed to lie and play any cards you want.\n"
         "4. After you play, the opponent may Challenge or Pass.\n"
         "5. If Challenged:\n"
-        "   a. If any played card differs from the declared rank, you pick up the pile.\n"
-        "   b. If all played cards match the declared rank, the challenger picks up the pile.\n"
-        "6. If the opponent Passes, play continues.\n"
-        "7. The pile resets to empty whenever someone picks it up.\n"
+        "   a. If any played card does NOT match the required rank, you were lying — you pick up the pile.\n"
+        "   b. If all played cards DO match the required rank, the challenger picks up the pile.\n"
+        "6. If the opponent Passes, play continues with the next system-provided required rank.\n"
+        "7. The pile resets whenever someone picks it up.\n"
         "8. The game ends when a player has zero cards and does not have to pick up the pile.\n"
     )
-
     def __init__(self, name, model_name, model, tokenizer, seed=0, cot=False, log_dir=None):
         self.name = name
         self.model_name = model_name

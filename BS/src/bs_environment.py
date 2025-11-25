@@ -89,7 +89,8 @@ class BSEnvironment:
 
         # --- Increment turn ---
         self.turn += 1
-        self.current_rank = (self.current_rank + 1) % 13
+        #self.current_rank = (self.current_rank + 1) % 13
+        self.current_rank = (self.current_rank + 1) % 9 + 2
 
         return summary_play, summary_challenge
 
