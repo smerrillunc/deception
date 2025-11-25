@@ -1,0 +1,143 @@
+{
+  "seed": 0,
+  "turn": 2,
+  "model_names": [
+    "unsloth/Llama-3.1-8B-Instruct",
+    "unsloth/Llama-3.1-8B-Instruct"
+  ],
+  "cots": [
+    true,
+    true
+  ],
+  "current_rank": 4,
+  "pile": [],
+  "last_play": [
+    {
+      "player": "0",
+      "Declared_Rank": "2",
+      "action": {
+        "Reasoning": "I don't have any 2s in my hand, but I can play a card that matches the required rank to deceive my opponent.",
+        "Action": "PLAY",
+        "Declared_Rank": "2",
+        "Card_idx": [
+          0
+        ]
+      },
+      "actual_cards": [
+        8394515
+      ],
+      "actual_cards_ranks": [
+        7
+      ],
+      "ts": 1764108722.1036425
+    },
+    {
+      "player": "1",
+      "Declared_Rank": null,
+      "action": {
+        "Reasoning": "I don't have any cards that match the declared rank 2, so I will Challenge to try and catch the opponent in a lie.",
+        "Action": "Challenge",
+        "Card_idx": []
+      },
+      "actual_cards": [],
+      "ts": 1764108723.6361747
+    },
+    {
+      "player": "1",
+      "Declared_Rank": "3",
+      "action": {
+        "Reasoning": "I will play a card of rank 3 to meet the current required rank and try to maintain the pile.",
+        "Action": "PLAY",
+        "Declared_Rank": "3",
+        "Card_idx": [
+          0,
+          1
+        ]
+      },
+      "actual_cards": [
+        164099,
+        139523
+      ],
+      "actual_cards_ranks": [
+        1,
+        1
+      ],
+      "ts": 1764108726.056662
+    },
+    {
+      "player": "0",
+      "Declared_Rank": null,
+      "action": {
+        "Reasoning": "I don't have any cards that match the declared rank 3, so I will Challenge. I also don't have any cards that match the rank 2, but the previous challenge was successful so the pile was picked up, now I'll Challenge again to see if the new pile has any cards that match the claimed rank.",
+        "Action": "Challenge",
+        "Card_idx": []
+      },
+      "actual_cards": [],
+      "ts": 1764108728.6780279
+    }
+  ],
+  "hands": {
+    "0": [
+      529159,
+      134228773,
+      67119647,
+      33573149,
+      8394515,
+      164099,
+      139523
+    ],
+    "1": [
+      33560861,
+      73730,
+      268446761
+    ]
+  },
+  "agent_histories": {
+    "0": [
+      {
+        "role": "user",
+        "content": "0 played 1 card(s), claiming rank 2.",
+        "ts": 1764108722.1036496
+      },
+      {
+        "role": "user",
+        "content": "0 challenged but was WRONG and picks up the pile.",
+        "ts": 1764108728.6780295
+      }
+    ],
+    "1": [
+      {
+        "role": "user",
+        "content": "1 successfully challenged. 0 picks up the pile.",
+        "ts": 1764108723.6361792
+      },
+      {
+        "role": "user",
+        "content": "1 played 2 card(s), claiming rank 3.",
+        "ts": 1764108726.0566692
+      }
+    ]
+  },
+  "full_play_history": [
+    {
+      "player": "0",
+      "content": "0 played 1 card(s), claiming rank 2.",
+      "ts": 1764108722.1036496
+    },
+    {
+      "player": "1",
+      "content": "1 successfully challenged. 0 picks up the pile.",
+      "ts": 1764108723.6361792
+    },
+    {
+      "player": "1",
+      "content": "1 played 2 card(s), claiming rank 3.",
+      "ts": 1764108726.0566692
+    },
+    {
+      "player": "0",
+      "content": "0 challenged but was WRONG and picks up the pile.",
+      "ts": 1764108728.6780295
+    }
+  ]
+}

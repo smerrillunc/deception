@@ -1,0 +1,90 @@
+{
+  "seed": 0,
+  "turn": 1,
+  "model_names": [
+    "unsloth/Llama-3.1-8B-Instruct",
+    "unsloth/Llama-3.1-8B-Instruct"
+  ],
+  "cots": [
+    true,
+    true
+  ],
+  "current_rank": 3,
+  "pile": [],
+  "last_play": [
+    {
+      "player": "0",
+      "Declared_Rank": "2",
+      "action": {
+        "Reasoning": "I don't have any 2s in my hand, but I can play a card that matches the required rank to deceive my opponent.",
+        "Action": "PLAY",
+        "Declared_Rank": "2",
+        "Card_idx": [
+          0
+        ]
+      },
+      "actual_cards": [
+        8394515
+      ],
+      "actual_cards_ranks": [
+        7
+      ],
+      "ts": 1764108722.1036425
+    },
+    {
+      "player": "1",
+      "Declared_Rank": null,
+      "action": {
+        "Reasoning": "I don't have any cards that match the declared rank 2, so I will Challenge to try and catch the opponent in a lie.",
+        "Action": "Challenge",
+        "Card_idx": []
+      },
+      "actual_cards": [],
+      "ts": 1764108723.6361747
+    }
+  ],
+  "hands": {
+    "0": [
+      529159,
+      134228773,
+      67119647,
+      33573149,
+      8394515
+    ],
+    "1": [
+      164099,
+      139523,
+      33560861,
+      73730,
+      268446761
+    ]
+  },
+  "agent_histories": {
+    "0": [
+      {
+        "role": "user",
+        "content": "0 played 1 card(s), claiming rank 2.",
+        "ts": 1764108722.1036496
+      }
+    ],
+    "1": [
+      {
+        "role": "user",
+        "content": "1 successfully challenged. 0 picks up the pile.",
+        "ts": 1764108723.6361792
+      }
+    ]
+  },
+  "full_play_history": [
+    {
+      "player": "0",
+      "content": "0 played 1 card(s), claiming rank 2.",
+      "ts": 1764108722.1036496
+    },
+    {
+      "player": "1",
+      "content": "1 successfully challenged. 0 picks up the pile.",
+      "ts": 1764108723.6361792
+    }
+  ]
+}
