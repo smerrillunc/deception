@@ -53,7 +53,7 @@ class BSEnvironment:
             "ts": time.time()
         })
 
-        summary_play = f"{current.name} played {len(actual_cards)} card(s), claiming rank {play_action.get('Declared_Rank')}."
+        summary_play = f"Player {current.name} played {len(actual_cards)} card(s), claiming rank {play_action.get('Declared_Rank')}."
         self._append_to_history(current, summary_play)
 
         # --- CHALLENGE ---
@@ -68,13 +68,13 @@ class BSEnvironment:
             truthful = all(Card.STR_RANKS[r] == declared_rank for r in actual_ranks)
             if truthful:
                 opponent.add_cards(self.pile)
-                summary_challenge = f"{opponent.name} challenged but was WRONG and picks up the pile."
+                summary_challenge = f"Player {opponent.name} challenged but was WRONG and picks up the pile."
             else:
                 current.add_cards(self.pile)
-                summary_challenge = f"{opponent.name} successfully challenged. {current.name} picks up the pile."
+                summary_challenge = f"Player {opponent.name} successfully challenged. Player {current.name} picks up the pile."
             self.pile = []
         else:
-            summary_challenge = f"{opponent.name} passed."
+            summary_challenge = f"Player {opponent.name} passed."
 
         # Append challenge to last_play
         self.last_play.append({
@@ -122,7 +122,7 @@ class BSEnvironment:
         base = f"""Game Context:
     You are Player {agent.name}.
     Your hand ({len(agent.hand)} cards): {hand_str}
-    Opponent {opponent.name} has {opponent_cards} cards.
+    Opponent - Player {opponent.name} has {opponent_cards} cards.
     Pile size: {len(self.pile)}
     Current required rank: {self.current_rank}
     Last play: {last_play_str}
@@ -153,7 +153,7 @@ class BSEnvironment:
 
         base = f"""
     You are Player {agent.name}.
-    Opponent {opponent.name} has {len(opponent.hand)} cards.
+    Opponent - Player {opponent.name} has {len(opponent.hand)} cards.
     They just played {len(played_cards)} card(s) claiming rank {declared_rank}.
     Your hand ({len(agent.hand)} cards): {','.join(agent._render_hand())}
 

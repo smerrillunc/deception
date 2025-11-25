@@ -11,7 +11,6 @@ class Deck:
         self.shuffle()
 
     def shuffle(self):
-        # copy full deck into instance deck
         self.cards = Deck.get_full_deck()
         if self.seed is not None:
             rng = random.Random(self.seed)
@@ -37,7 +36,14 @@ class Deck:
     def get_full_deck():
         if Deck._FULL_DECK:
             return list(Deck._FULL_DECK)
+
+        # Only keep ranks 2–9; Note Treys uses 'T' for 10
+        allowed_ranks = set("23456789")
+
         for rank in Card.STR_RANKS:
+            if rank not in allowed_ranks:
+                continue   # skip J, Q, K, A
             for suit in Card.CHAR_SUIT_TO_INT_SUIT.keys():
                 Deck._FULL_DECK.append(Card.new(rank + suit))
+
         return list(Deck._FULL_DECK)
