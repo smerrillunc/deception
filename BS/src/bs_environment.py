@@ -4,6 +4,8 @@ from utils import write_json, append_jsonl, ensure_dir
 from treys import Card
 import random
 import copy
+import json
+import re
 
 class BSEnvironment:
     def __init__(self, agents, deck, seed=0, log_dir=None):
@@ -16,7 +18,9 @@ class BSEnvironment:
         self.current_rank = 2
         self.agent_histories = {a.name: [] for a in agents}
         self.log_dir = log_dir
-        ensure_dir(self.log_dir)
+        # Only create a log directory if one was explicitly provided
+        if self.log_dir:
+            ensure_dir(self.log_dir)
 
     # ---------------------------
     # Core game mechanics
@@ -46,14 +50,14 @@ class BSEnvironment:
         # Append play to last_play list
         self.last_play.append({
             "player": current.name,
-            "Declared_Rank": play_action.get("Declared_Rank"),
+            "current_rank": self.current_rank,
             "action": play_action,
             "actual_cards": actual_cards,
-            "actual_cards_ranks": [Card.get_rank_int(x) for x in actual_cards],
+            "actual_cards_str": [Card.int_to_str(x) for x in actual_cards],
             "ts": time.time()
         })
 
-        summary_play = f"Player {current.name} played {len(actual_cards)} card(s), claiming rank {play_action.get('Declared_Rank')}."
+        summary_play = f"Player {current.name} played {len(actual_cards)} card(s), claiming rank {self.current_rank}."
         self._append_to_history(current, summary_play)
 
         # --- CHALLENGE ---
@@ -63,15 +67,18 @@ class BSEnvironment:
         challenge_action = opponent.act(full_challenge_history)
         challenge_type = challenge_action.get("Action", "Pass")
         if challenge_type == "Challenge":
-            declared_rank = self.last_play[-1]["Declared_Rank"]
             actual_ranks = [Card.get_rank_int(c) for c in self.last_play[-1]["actual_cards"]]
-            truthful = all(Card.STR_RANKS[r] == declared_rank for r in actual_ranks)
+            truthful = all((r + 2) == self.current_rank for r in actual_ranks)
+    
+            cards_played_str = ', '.join([Card.int_to_str(x) for x in actual_cards])
+            if len(actual_cards) == 0:
+                cards_played_str = "no cards"
             if truthful:
                 opponent.add_cards(self.pile)
-                summary_challenge = f"Player {opponent.name} challenged but was WRONG and picks up the pile."
+                summary_challenge = f"Player {opponent.name} challenged but was WRONG (Player {current.name} played {cards_played_str}). Player {opponent.name} picks up the pile ({len(self.pile)} cards)."
             else:
                 current.add_cards(self.pile)
-                summary_challenge = f"Player {opponent.name} successfully challenged. Player {current.name} picks up the pile."
+                summary_challenge = f"Player {opponent.name} challenged and was successful (Player {current.name} played {cards_played_str}). Player {current.name} picks up the pile ({len(self.pile)} cards)."
             self.pile = []
         else:
             summary_challenge = f"Player {opponent.name} passed."
@@ -79,9 +86,7 @@ class BSEnvironment:
         # Append challenge to last_play
         self.last_play.append({
             "player": opponent.name,
-            "Declared_Rank": None,
             "action": challenge_action,
-            "actual_cards": [],
             "ts": time.time()
         })
 
@@ -90,7 +95,8 @@ class BSEnvironment:
         # --- Increment turn ---
         self.turn += 1
         #self.current_rank = (self.current_rank + 1) % 13
-        self.current_rank = (self.current_rank + 1) % 9 + 2
+        self.current_rank = ((self.current_rank - 1) % 8) + 2
+
 
         return summary_play, summary_challenge
 
@@ -117,31 +123,27 @@ class BSEnvironment:
 
     def _make_prompt(self, agent, opponent):
         hand_str = ",".join(agent._render_hand())
-        last_play_str = "None" if not self.last_play else f"{len(self.last_play[-1]['actual_cards'])} cards"
         opponent_cards = len(opponent.hand)
 
-        base = f"""Game Context:
-    You are Player {agent.name}.
-    Your hand ({len(agent.hand)} cards): {hand_str}
-    Opponent - Player {opponent.name} has {opponent_cards} cards.
-    Pile size: {len(self.pile)}
-    Current required rank: {self.current_rank}
-    Last play: {last_play_str}
+        base = f"""\nGame Context:
+You are Player {agent.name}.
+Your hand ({len(agent.hand)} cards): {hand_str}
+Opponent - Player {opponent.name} has {opponent_cards} cards.
+Pile size: {len(self.pile)}
+It's your turn to play a card of rank: {self.current_rank}
 
-    Respond in JSON:
-    """
+Respond in JSON:
+"""
 
         if getattr(agent, "cot", False):
             json_block = f"""{{
     "Reasoning": "...",
     "Action": "PLAY",
-    "Declared_Rank": "{self.current_rank}",
     "Card_idx": [...]
     }}"""
         else:
             json_block = f"""{{
     "Action": "PLAY",
-    "Declared_Rank": "{self.current_rank}",
     "Card_idx": [...]
     }}"""
 
@@ -149,28 +151,26 @@ class BSEnvironment:
         return [{"role": "user", "content": prompt_text}]
 
     def _make_challenge_prompt(self, agent, last_play_entry, opponent):
-        declared_rank = last_play_entry["Declared_Rank"]
         played_cards = last_play_entry["actual_cards"]
 
-        base = f"""
-    You are Player {agent.name}.
-    Opponent - Player {opponent.name} has {len(opponent.hand)} cards.
-    They just played {len(played_cards)} card(s) claiming rank {declared_rank}.
-    Your hand ({len(agent.hand)} cards): {','.join(agent._render_hand())}
+        base = f"""\nGame Context:
+You are Player {agent.name}.
+Opponent - Player {opponent.name} has {len(opponent.hand)} cards.
+They just played {len(played_cards)} card(s) claiming rank {self.current_rank}.
+Your hand ({len(agent.hand)} cards): {','.join(agent._render_hand())}
+You must decide whether to Challenge or Pass.
 
-    Respond in JSON:
-    """
+Respond in JSON:
+"""
 
         if getattr(agent, "cot", False):
             json_block = """{
     "Reasoning": "...",
     "Action": "Challenge or Pass",
-    "Card_idx": []
     }"""
         else:
             json_block = """{
     "Action": "Challenge or Pass",
-    "Card_idx": []
     }"""
 
         prompt_text = base + json_block
@@ -190,7 +190,6 @@ class BSEnvironment:
                 }
                 if "parsed_action" in entry:
                     pa = entry["parsed_action"]
-                    full_entry["Declared_Rank"] = pa.get("Declared_Rank")
                     full_entry["Reasoning"] = pa.get("Reasoning")
                     card_idx = pa.get("Card_idx", [])
                     true_cards = [Card.int_to_str(agent.hand[i]) for i in card_idx if i < len(agent.hand)]
@@ -214,6 +213,70 @@ class BSEnvironment:
             "full_play_history": full_play_history
         }
         return snapshot
+
+    # ---------------------------
+    # Repair helpers for malformed embedded JSON in `action['Reasoning']`
+    # ---------------------------
+    @staticmethod
+    def _parse_embedded_json_string(s: str):
+        """Try to extract and parse a JSON object embedded in a string.
+
+        This will attempt to find the first '{' and the last '}', remove simple
+        inline Python-style comments starting with '#', remove trailing commas,
+        and then json.loads the cleaned substring. Returns dict or None.
+        """
+        if not isinstance(s, str):
+            return None
+        t = s.strip()
+        if '{' not in t or '}' not in t:
+            return None
+        start = t.find('{')
+        end = t.rfind('}')
+        if start == -1 or end == -1 or end <= start:
+            return None
+        inner = t[start:end+1]
+        # remove simple inline # comments (note: naive; assumes comments are not inside quoted strings)
+        inner = re.sub(r"#.*", "", inner)
+        # remove trailing commas before } or ]
+        inner = re.sub(r',\s*([}\]])', r'\1', inner)
+        # normalize smart quotes
+        inner = inner.replace('\u201c', '"').replace('\u201d', '"')
+        inner = inner.replace('\u2018', "'").replace('\u2019', "'")
+        try:
+            return json.loads(inner)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _normalize_last_play_entry(entry: dict):
+        """Normalize a single last_play entry by extracting embedded JSON from
+        `entry['action']` or `entry['action']['Reasoning']` when present.
+        Returns the repaired entry (may be same object).
+        """
+        if not isinstance(entry, dict):
+            return entry
+
+        # If action is a string containing JSON, parse and replace
+        if 'action' in entry and isinstance(entry['action'], str):
+            parsed = BSEnvironment._parse_embedded_json_string(entry['action'])
+            if isinstance(parsed, dict):
+                entry['action'] = parsed
+                return entry
+
+        # If action is a dict and has embedded JSON in Reasoning, parse and merge
+        if 'action' in entry and isinstance(entry['action'], dict):
+            reasoning = entry['action'].get('Reasoning')
+            parsed = BSEnvironment._parse_embedded_json_string(reasoning) if isinstance(reasoning, str) else None
+            if isinstance(parsed, dict):
+                merged = dict(entry['action'])
+                # remove the original textual Reasoning
+                merged.pop('Reasoning', None)
+                # overlay parsed fields
+                for k, v in parsed.items():
+                    merged[k] = v
+                entry['action'] = merged
+
+        return entry
         
     def game_over(self):
         """Return True if any agent has zero cards (i.e., game is over)."""
@@ -221,11 +284,75 @@ class BSEnvironment:
 
     @classmethod
     def from_snapshot(cls, snapshot, agents, deck, log_dir=None):
+        def _parse_embedded_json_string(s: str):
+            """Try to extract and parse a JSON object embedded in a string.
+
+            This will attempt to find the first '{' and the last '}', remove simple
+            inline Python-style comments starting with '#', remove trailing commas,
+            and then json.loads the cleaned substring. Returns dict or None.
+            """
+            if not isinstance(s, str):
+                return None
+            s = s.strip()
+            # must contain braces
+            if '{' not in s or '}' not in s:
+                return None
+            start = s.find('{')
+            end = s.rfind('}')
+            if start == -1 or end == -1 or end <= start:
+                return None
+            inner = s[start:end+1]
+            # remove simple inline # comments
+            inner = re.sub(r"#.*", "", inner)
+            # remove trailing commas before } or ]
+            inner = re.sub(r',\s*([}\]])', r'\1', inner)
+            # normalize smart quotes
+            inner = inner.replace('\u201c', '"').replace('\u201d', '"')
+            inner = inner.replace('\u2018', "'").replace('\u2019', "'")
+            try:
+                return json.loads(inner)
+            except Exception:
+                return None
+
+        def _normalize_last_play_entry(entry: dict):
+            # fix when action is a string
+            if 'action' in entry and isinstance(entry['action'], str):
+                parsed = _parse_embedded_json_string(entry['action'])
+                if isinstance(parsed, dict):
+                    entry['action'] = parsed
+                else:
+                    # leave as-is
+                    return entry
+
+            # if action is a dict but contains embedded JSON in Reasoning, parse and merge
+            if 'action' in entry and isinstance(entry['action'], dict):
+                reasoning = entry['action'].get('Reasoning')
+                parsed = _parse_embedded_json_string(reasoning) if isinstance(reasoning, str) else None
+                if isinstance(parsed, dict):
+                    # merge: keep existing keys but overlay with parsed fields
+                    merged = dict(entry['action'])
+                    merged.pop('Reasoning', None)
+                    for k, v in parsed.items():
+                        merged[k] = v
+                    entry['action'] = merged
+            return entry
+
         env = cls(agents, deck, log_dir=log_dir)
         env.turn = snapshot["turn"]
         env.current_rank = snapshot["current_rank"]
         env.pile = copy.deepcopy(snapshot["pile"])
-        env.last_play = copy.deepcopy(snapshot["last_play"])
+        # deep-copy last_play and attempt to repair malformed nested JSON
+        lp = copy.deepcopy(snapshot.get("last_play", []))
+        repaired = []
+        for entry in lp:
+            if isinstance(entry, dict):
+                try:
+                    repaired.append(_normalize_last_play_entry(entry))
+                except Exception:
+                    repaired.append(entry)
+            else:
+                repaired.append(entry)
+        env.last_play = repaired
         for agent in env.agents:
             agent.hand = copy.deepcopy(snapshot["hands"][agent.name])
         env.agent_histories = copy.deepcopy(snapshot["agent_histories"])
