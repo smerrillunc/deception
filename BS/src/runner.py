@@ -39,7 +39,7 @@ class GameRunner:
     def run_single_game(self, model_names, cots,seed=0, n_cards=5):
         set_global_seed(seed)
 
-        deck = self.deck_class()
+        deck = self.deck_class(seed)
 
         models_dict = {}
         tokenizers_dict = {}
@@ -88,7 +88,6 @@ class GameRunner:
 
         models_dict, tokenizers_dict = self._load_models(model_names)
 
-        sim_files = []
         for sim_idx in tqdm.tqdm(range(num_sims)):
             print("Starting MC sim: ", sim_idx)
             seed = base_seed + sim_idx
@@ -120,5 +119,77 @@ class GameRunner:
                 with open(monte_dir / f"seed_{seed}/turn_{env.turn-1}.json", "w") as f:
                     json.dump(snap, f, indent=2)
                 total_steps += 1
+
+        return env, snapshots
+
+    def run_seed_trajectory(self, model_names, cots, seeds, n_cards=5):
+        """
+        Run a single game where each environment step uses a different random seed.
+        seeds: list of integers; seeds[i] is used before step i.
+        """
+        assert len(seeds) > 0, "Must provide at least one seed."
+
+        # --- Step 1: Initialize with seeds[0] ---
+        init_seed = seeds[0]
+        set_global_seed(init_seed)
+
+        deck = self.deck_class(init_seed)
+
+        # Load models
+        models_dict, tokenizers_dict = self._load_models(model_names)
+
+        # Create agents
+        agents = [
+            self.agent_class(
+                name=f"{i}",
+                cot=cots[i],
+                model_name=model_names[i],
+                model=models_dict[model_names[i]],
+                tokenizer=tokenizers_dict[model_names[i]],
+                seed=init_seed,   # initial seed
+                log_dir=os.path.join(self.log_root, f"seed_trajectory", "logs")
+            )
+            for i in range(self.num_players)
+        ]
+
+        # Initialize environment
+        env_dir = Path(self.log_root) / "seed_trajectory"
+        env_dir.mkdir(parents=True, exist_ok=True)
+
+        env = BSEnvironment(agents, deck, seed=init_seed, 
+                            log_dir=str(env_dir))
+        env.deal(n_cards=n_cards)
+
+        # Save snapshots directory
+        snap_dir = env_dir / "snapshots"
+        snap_dir.mkdir(parents=True, exist_ok=True)
+
+        snapshots = []
+
+        # --- Step 2: Run one step per seed ---
+        for step_idx, seed in enumerate(seeds):
+
+            # If game ended early, stop
+            if env.game_over() or env.turn >= self.max_steps:
+                break
+
+            # Step 3: update all agent seeds
+            for agent in env.agents:
+                agent.seed = seed
+            env.seed = seed   # optional, if env also uses randomness
+
+            set_global_seed(seed)
+            random.seed(seed)
+            np.random.seed(seed)
+
+            # --- Step 4: take a step ---
+            summary_play, summary_challenge = env.step()
+
+            snapshot = env.get_snapshot()
+            snapshots.append(snapshot)
+
+            # Save snapshot
+            with open(snap_dir / f"turn_{env.turn-1}.json", "w") as f:
+                json.dump(snapshot, f, indent=2)
 
         return env, snapshots
