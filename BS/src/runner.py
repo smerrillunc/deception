@@ -6,10 +6,12 @@ import sys
 sys.path.append("/playpen-ssd/smerrill/deception/BS/src")
 from utils import ensure_dir, set_global_seed
 from bs_environment import BSEnvironment
+from llm_agent import LLMAgent
 
 from pathlib import Path
 import numpy as np
 import tqdm
+import torch
 
 class GameRunner:
     def __init__(self, deck_class, agent_class, num_players=2, max_steps=20, log_root="games"):
@@ -68,17 +70,23 @@ class GameRunner:
         while not env.game_over() and env.turn < self.max_steps:
             summary_play, summary_challenge = env.step()
             snapshot = env.get_snapshot()
+
+            ### We won't save activations for standard game runs ###
+            #act_filepaths = self._save_activations(env, game_dir)
+            #snapshot['activations'] = act_filepaths
+
             snapshots.append(snapshot)
             # save snapshot directly in the game folder (no snapshots subfolder)
             with open(game_dir / f"turn_{env.turn-1}.json", "w") as f:
                 json.dump(snapshot, f, indent=2)
+            
         return env, snapshots
 
-    def run_monte_carlo(self, snapshot, num_sims=100, steps_per_sim=10):
+    def run_monte_carlo(self, snapshot, num_sims=100, steps_per_sim=1):
         base_seed = snapshot.get("seed", None)
         # Place Monte Carlo results inside the parent seed folder. Each sim will create its own seed folder and
         # a Turn_{N} subfolder for the starting turn (no 'monte_carlo_turn_' prefix).
-        monte_base = Path(self.log_root) / f"game_seed_{base_seed}"
+        monte_base = Path(self.log_root)
         monte_base.mkdir(parents=True, exist_ok=True)
 
         model_names = snapshot.get("model_names", None)
@@ -106,11 +114,14 @@ class GameRunner:
             # Deck not used yet
             deck = copy.deepcopy(snapshot.get("deck_state", None))
             # Create a per-sim output folder: game_seed_{base_seed}/seed_{seed}/Turn_{start_turn}
-            sim_dir = monte_base / f"Turn_{snapshot['turn']}" / f"seed_{seed}"
+            
+            sim_dir = monte_base
+
             # If the sim output folder already has snapshots, skip this sim
-            if sim_dir.exists() and any(sim_dir.glob('turn_*.json')):
+            if sim_dir.exists() and os.path.exists(sim_dir / f"seed_{seed}.json"):
                 print(f"Skipping MC sim {sim_idx} (seed {seed}): snapshots already exist in {sim_dir}")
                 continue
+
             sim_dir.mkdir(parents=True, exist_ok=True)
             env = BSEnvironment.from_snapshot(snapshot, agents, deck, log_dir=None)
             env.seed = seed
@@ -118,12 +129,21 @@ class GameRunner:
 
             total_steps = 0
             while not env.game_over() and env.turn < self.max_steps and total_steps < steps_per_sim:
-                summary_play, summary_challenge = env.step()
+                # we want to save activations during MC sims
+                summary_play, summary_challenge = env.step(save_activations=True)
                 snap = env.get_snapshot()
+
+                # this will be the player who just acted (not challenged or passed)
+                current_idx = (env.turn - 1) % len(env.agents)
+                act_filepaths = self._save_activations(env, sim_dir, seed, current_idx)
+                snap['activations'] = act_filepaths
+
                 snapshots.append(snap)
+            
                 # save snapshot into the per-sim folder
-                with open(sim_dir / f"turn_{env.turn-1}.json", "w") as f:
+                with open(sim_dir / f"seed_{seed}.json", "w") as f:
                     json.dump(snap, f, indent=2)
+
                 total_steps += 1
 
             last_env = env
@@ -195,6 +215,8 @@ class GameRunner:
             summary_play, summary_challenge = env.step()
 
             snapshot = env.get_snapshot()
+            act_filepaths = self._save_activations(env, env_dir)
+            snapshot['activations'] = act_filepaths
             snapshots.append(snapshot)
 
             # Save snapshot directly in the trajectory folder
@@ -202,3 +224,82 @@ class GameRunner:
                 json.dump(snapshot, f, indent=2)
 
         return env, snapshots
+    
+    def run_truthful_trajectory(self, snapshot, num_sims=5, output_name="truthful_trajectory/turn_0.pkl"):
+        if os.path.exists(output_name):
+            print(f"Skipping truthful trajectory: output already exists at  output_name")
+            return []
+        else:
+            ensure_dir(os.path.dirname(output_name))
+        
+        actions = []
+        num_players = 2
+        base_seed = snapshot.get("seed", None)
+        model_names = snapshot.get("model_names", None)
+        cots = snapshot.get("cots", None)
+        deck = copy.deepcopy(snapshot.get("deck_state", None))
+
+        # Load models
+        self._load_models(model_names)
+
+        for sim_idx in tqdm.tqdm(range(num_sims)):
+            print('-'*20)
+            print("Starting truthful sim: ", sim_idx)
+            seed = base_seed + sim_idx
+            random.seed(seed)
+
+            # Do not write per-agent logs during MC sims
+            agents = [LLMAgent(name=f"{c}",
+                                        model_name=model_names[c],
+                                        cot=cots[c],
+                                        model=self.models_dict[model_names[c]],
+                                        tokenizer=self.tokenizers_dict[model_names[c]],
+                                        seed=seed,
+                                        log_dir=None)
+                        for c in range(num_players)]
+            
+            env = BSEnvironment.from_snapshot(snapshot, agents, deck, log_dir=None)
+
+            current_idx = env.turn % len(env.agents)
+            current = env.agents[current_idx]
+            opponent_idx = (env.turn + 1) % len(env.agents)
+            opponent = env.agents[opponent_idx]
+
+            # --- Challenge Prompt Construction ---
+            challenge_prompt = env._make_challenge_prompt(opponent, env.last_play[-2], current)
+            history = env._get_full_history()
+
+            # Add truthful message for other player
+            history[-1]['content'] += f"\nPlayer {current.name} played 0 card(s), claiming rank {env.current_rank}."
+            full_challenge_history = env._merge_history_and_prompt(history, challenge_prompt)
+
+            # we are just measuring if opponent's action distribution changes, so no need to save_activations
+            challenge_action = opponent.act(full_challenge_history, save_activations=False)
+            challenge_type = challenge_action.get("Action", "Pass")
+            actions.append({seed: challenge_type})
+
+        np.save(output_name, actions)
+        return actions
+
+    def _save_activations(self, env, game_dir, seed, current_idx):
+        """Save activations ONLY for the agent who just played."""
+
+        activations_dir = game_dir / "activations"
+        activations_dir.mkdir(exist_ok=True, parents=True)
+
+        current = env.agents[current_idx]
+
+        act_data = current.activations.copy()
+
+        act_data.update({
+            "agent_name": current.name,
+            "turn": env.turn - 1,   # the play that just happened
+            "hand": current._render_hand(),
+            "model_name": current.model_name,
+            "seed": current.seed
+        })
+
+        save_path = activations_dir / f"seed_{seed}_agent_{current.name}.pt"
+        torch.save(act_data, save_path)
+
+        return {current.name: str(save_path)}

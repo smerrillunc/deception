@@ -30,7 +30,7 @@ class BSEnvironment:
             cards = self.deck.draw(n_cards)
             agent.add_cards(cards)
 
-    def step(self):
+    def step(self, save_activations=False, debug=False):
         """Perform one turn: current player plays, opponent may challenge."""
         current_idx = self.turn % len(self.agents)
         current = self.agents[current_idx]
@@ -41,7 +41,7 @@ class BSEnvironment:
         play_prompt = self._make_prompt(current, opponent)
         full_play_history = self._merge_history_and_prompt(self._get_full_history(), play_prompt)
         
-        play_action = current.act(full_play_history)
+        play_action = current.act(history=full_play_history, save_activations=save_activations)
         card_indices = play_action.get("Card_idx", [])
         actual_cards = [current.hand[i] for i in card_indices if i < len(current.hand)]
         current.remove_cards(actual_cards)
@@ -64,7 +64,8 @@ class BSEnvironment:
         challenge_prompt = self._make_challenge_prompt(opponent, self.last_play[-1], current)
         full_challenge_history = self._merge_history_and_prompt(self._get_full_history(), challenge_prompt)
         
-        challenge_action = opponent.act(full_challenge_history)
+        # don't need to save_activations for challenge step
+        challenge_action = opponent.act(history=full_challenge_history, save_activations=False)
         challenge_type = challenge_action.get("Action", "Pass")
         if challenge_type == "Challenge":
             actual_ranks = [Card.get_rank_int(c) for c in self.last_play[-1]["actual_cards"]]
@@ -92,6 +93,11 @@ class BSEnvironment:
 
         self._append_to_history(opponent, summary_challenge)
 
+        if debug:
+            print("Play Turn:")
+            print(json.dumps(self.last_play[-2], indent=2))
+            print("Challenge Turn:")
+            print(json.dumps(self.last_play[-1], indent=2))
         # --- Increment turn ---
         self.turn += 1
         #self.current_rank = (self.current_rank + 1) % 13
