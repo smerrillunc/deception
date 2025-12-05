@@ -37,42 +37,62 @@ class BSEnvironment:
         opponent_idx = (self.turn + 1) % len(self.agents)
         opponent = self.agents[opponent_idx]
 
+        current_hand = copy.deepcopy(current.hand)
+        current_hand_str = [Card.int_to_str(x) for x in current_hand]
+
+        opponent_hand = copy.deepcopy(opponent.hand)
+        opponent_hand_str = [Card.int_to_str(x) for x in opponent_hand]
+
+        current_pile = copy.deepcopy(self.pile)
+
         # --- PLAY ---
-        play_prompt = self._make_prompt(current, opponent)
-        full_play_history = self._merge_history_and_prompt(self._get_full_history(), play_prompt)
+        play_prompt = BSEnvironment._make_prompt(current.name, opponent.name, current_hand_str, opponent_hand_str, current_pile, self.current_rank, current.cot)
+        full_play_history = BSEnvironment._merge_history_and_prompt(BSEnvironment._get_truncated_history(self._build_full_history()), play_prompt)
         
         play_action = current.act(history=full_play_history, save_activations=save_activations)
         card_indices = play_action.get("Card_idx", [])
-        actual_cards = [current.hand[i] for i in card_indices if i < len(current.hand)]
-        current.remove_cards(actual_cards)
-        self.pile.extend(actual_cards)
+        played_cards = [current.hand[i] for i in card_indices if i < len(current.hand)]
+        played_cards_ranks = [Card.get_rank_int(c) for c in played_cards]
+        truthful = all((r + 2) == self.current_rank for r in played_cards_ranks)
+
+        current.remove_cards(played_cards)
+        self.pile.extend(played_cards)
 
         # Append play to last_play list
         self.last_play.append({
             "player": current.name,
+            "opponent": opponent.name,
             "current_rank": self.current_rank,
+            "current_hand": current_hand,
+            "current_hand_str": current_hand_str,
+            "opponent_hand": opponent_hand,
+            "opponent_hand_str": opponent_hand_str,
+            "current_pile": current_pile,
             "action": play_action,
-            "actual_cards": actual_cards,
-            "actual_cards_str": [Card.int_to_str(x) for x in actual_cards],
+            "played_cards": played_cards,
+            "played_cards_str": [Card.int_to_str(x) for x in played_cards],
+            "played_cards_ranks": played_cards_ranks,
+            "truthful": truthful,
+            "new_pile": copy.deepcopy(self.pile),
             "ts": time.time()
         })
 
-        summary_play = f"Player {current.name} played {len(actual_cards)} card(s), claiming rank {self.current_rank}."
+        summary_play = f"Player {current.name} played {len(played_cards)} card(s), claiming rank {self.current_rank}."
         self._append_to_history(current, summary_play)
 
         # --- CHALLENGE ---
         challenge_prompt = self._make_challenge_prompt(opponent, self.last_play[-1], current)
-        full_challenge_history = self._merge_history_and_prompt(self._get_full_history(), challenge_prompt)
+        
+
+
+        full_challenge_history = self._merge_history_and_prompt(BSEnvironment._get_truncated_history(self._build_full_history()), challenge_prompt)
         
         # don't need to save_activations for challenge step
         challenge_action = opponent.act(history=full_challenge_history, save_activations=False)
         challenge_type = challenge_action.get("Action", "Pass")
-        if challenge_type == "Challenge":
-            actual_ranks = [Card.get_rank_int(c) for c in self.last_play[-1]["actual_cards"]]
-            truthful = all((r + 2) == self.current_rank for r in actual_ranks)
-    
-            cards_played_str = ', '.join([Card.int_to_str(x) for x in actual_cards])
-            if len(actual_cards) == 0:
+        if challenge_type == "Challenge":    
+            cards_played_str = ', '.join([Card.int_to_str(x) for x in played_cards])
+            if len(played_cards) == 0:
                 cards_played_str = "no cards"
             if truthful:
                 opponent.add_cards(self.pile)
@@ -109,39 +129,42 @@ class BSEnvironment:
     # ---------------------------
     # History helpers
     # ---------------------------
-    def _get_full_history(self, last_n_turns=15):
-        """Return a single user message summarizing the last N turns merged chronologically."""
+    def _build_full_history(self):
         all_entries = []
         for hist in self.agent_histories.values():
             all_entries.extend(hist)
+        return all_entries  
+
+    @staticmethod
+    def _get_truncated_history(all_entries, last_n_turns=15):
+        """Return a single user message summarizing the last N turns merged chronologically."""
         all_entries.sort(key=lambda x: x['ts'])
         entries = all_entries[-last_n_turns:]
         combined_history = f"Game History (last {len(entries)} turns):\n"
         combined_history += "\n".join(e['content'] for e in entries)
         return [{"role": "user", "content": combined_history}]
 
-    def _merge_history_and_prompt(self, history_msgs, prompt_msgs):
+    @staticmethod
+    def _merge_history_and_prompt(history_msgs, prompt_msgs):
         """Merge multiple user messages into a single user message."""
         contents = [m["content"] for m in history_msgs + prompt_msgs]
         merged_content = "\n".join(contents)
         return [{"role": "user", "content": merged_content}]
 
-
-    def _make_prompt(self, agent, opponent):
-        hand_str = ",".join(agent._render_hand())
-        opponent_cards = len(opponent.hand)
+    @staticmethod
+    def _make_prompt(agent_name, opponent_name, agent_hand_str, opponent_hand_str, pile, current_rank, cot=True):
 
         base = f"""\nGame Context:
-You are Player {agent.name}.
-Your hand ({len(agent.hand)} cards): {hand_str}
-Opponent - Player {opponent.name} has {opponent_cards} cards.
-Pile size: {len(self.pile)}
-It's your turn to play a card of rank: {self.current_rank}
+You are Player {agent_name}.
+Your hand ({len(agent_hand_str)} cards): {agent_hand_str}
+Opponent - Player {opponent_name} has {len(opponent_hand_str)} cards.
+Pile size: {len(pile)}
+It's your turn to play a card of rank: {current_rank}
 
 Respond in JSON:
 """
 
-        if getattr(agent, "cot", False):
+        if cot:
             json_block = f"""{{
     "Reasoning": "...",
     "Action": "PLAY",
@@ -157,11 +180,11 @@ Respond in JSON:
         return [{"role": "user", "content": prompt_text}]
 
     def _make_challenge_prompt(self, agent, last_play_entry, opponent):
-        played_cards = last_play_entry["actual_cards"]
+        played_cards = last_play_entry["played_cards"]
 
         base = f"""\nGame Context:
 You are Player {agent.name}.
-Opponent - Player {opponent.name} has {len(opponent.hand)} cards.
+Opponent - Player {opponent.name} now has {len(opponent.hand)} cards.
 They just played {len(played_cards)} card(s) claiming rank {self.current_rank}.
 Your hand ({len(agent.hand)} cards): {','.join(agent._render_hand())}
 You must decide whether to Challenge or Pass.
@@ -212,6 +235,7 @@ Respond in JSON:
             "model_names": model_names,
             "cots": cots,
             "current_rank": self.current_rank,
+            "num_players": len(self.agents),
             "pile": copy.deepcopy(self.pile),
             "last_play": copy.deepcopy(self.last_play),  # list of all plays
             "hands": {a.name: copy.deepcopy(a.hand) for a in self.agents},

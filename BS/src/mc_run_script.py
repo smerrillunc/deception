@@ -7,6 +7,8 @@ import random
 import argparse
 from pathlib import Path
 import tqdm
+import torch
+import gc
 
 # ---- Project Imports ----
 sys.path.append("/playpen-ssd/smerrill/deception/BS/src")
@@ -43,10 +45,10 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--max_turns",
+        "--single_seed",
         type=int,
         default=None,
-        help="Optional cap on number of turns processed per seed"
+        help="start seed number"
     )
 
     return parser.parse_args()
@@ -60,17 +62,20 @@ def main():
 
     assert result_path.exists(), f"Result path not found: {result_path}"
 
-    game_seeds = [x for x in os.listdir(result_path) if not x.startswith(".")]
-    random.shuffle(game_seeds)
+    game_seeds = sorted([x for x in os.listdir(result_path) if not x.startswith(".")])
+
+    if args.single_seed:
+        game_seeds = game_seeds[args.single_seed]
+    else:
+        random.shuffle(game_seeds)
+
     print(f"Found {len(game_seeds)} game seeds")
 
-    runner = GameRunner(
-        deck_class=Deck,
-        agent_class=LLMAgent,
-        log_root=log_root
-    )
-
     for game_seed in tqdm.tqdm(game_seeds, desc="Game Seeds"):
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
         seed_path = result_path / game_seed
 
         if not seed_path.is_dir():
@@ -80,11 +85,17 @@ def main():
             x for x in os.listdir(seed_path)
             if x.endswith(".json")
         ])
-
-        if args.max_turns is not None:
-            turn_files = turn_files[:args.max_turns]
+        
+        random.shuffle(turn_files)
 
         for turn_file in turn_files:
+            runner = GameRunner(
+                deck_class=Deck,
+                agent_class=LLMAgent,
+                log_root=log_root
+            )
+
+
             turn_path = seed_path / turn_file
 
             print(f"\n▶ Running MC for: {turn_path}")
@@ -102,6 +113,11 @@ def main():
                 snapshot=snapshot,
                 num_sims=args.num_sims
             )
+            
+            del runner
+            gc.collect()
+            torch.cuda.empty_cache()    
+            torch.cuda.ipc_collect()
 
     print("\n✅ Monte Carlo batch completed successfully.")
 

@@ -1,3 +1,4 @@
+import gc
 import os
 import json
 import copy
@@ -70,7 +71,7 @@ class GameRunner:
         while not env.game_over() and env.turn < self.max_steps:
             summary_play, summary_challenge = env.step()
             snapshot = env.get_snapshot()
-
+            
             ### We won't save activations for standard game runs ###
             #act_filepaths = self._save_activations(env, game_dir)
             #snapshot['activations'] = act_filepaths
@@ -94,8 +95,6 @@ class GameRunner:
 
         self._load_models(model_names)
 
-        last_env = None
-        last_snapshots = []
         for sim_idx in tqdm.tqdm(range(num_sims)):
             print("Starting MC sim: ", sim_idx)
             seed = base_seed + sim_idx
@@ -125,12 +124,12 @@ class GameRunner:
             sim_dir.mkdir(parents=True, exist_ok=True)
             env = BSEnvironment.from_snapshot(snapshot, agents, deck, log_dir=None)
             env.seed = seed
-            snapshots = []
+            #snapshots = []
 
             total_steps = 0
             while not env.game_over() and env.turn < self.max_steps and total_steps < steps_per_sim:
                 # we want to save activations during MC sims
-                summary_play, summary_challenge = env.step(save_activations=True)
+                summary_play, summary_challenge = env.step()
                 snap = env.get_snapshot()
 
                 # this will be the player who just acted (not challenged or passed)
@@ -138,18 +137,23 @@ class GameRunner:
                 act_filepaths = self._save_activations(env, sim_dir, seed, current_idx)
                 snap['activations'] = act_filepaths
 
-                snapshots.append(snap)
+                #snapshots.append(snap)
             
                 # save snapshot into the per-sim folder
                 with open(sim_dir / f"seed_{seed}.json", "w") as f:
                     json.dump(snap, f, indent=2)
 
                 total_steps += 1
+                del snap
 
-            last_env = env
-            last_snapshots = snapshots
+            del env
+            del agents
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
-        return last_env, last_snapshots
+        return 1
+
 
     def run_seed_trajectory(self, model_names, cots, seeds, n_cards=5, output_dir_name="seed_trajectory"):
         """
@@ -215,6 +219,7 @@ class GameRunner:
             summary_play, summary_challenge = env.step()
 
             snapshot = env.get_snapshot()
+            
             act_filepaths = self._save_activations(env, env_dir)
             snapshot['activations'] = act_filepaths
             snapshots.append(snapshot)

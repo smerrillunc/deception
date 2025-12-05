@@ -71,7 +71,7 @@ class LLMAgent:
         except Exception:
             return list(self.hand)
 
-    def generate(self, history=None, save_activations=True, max_new_tokens=250, temperature=0.7, top_p=0.9):
+    def generate(self, history=None, save_activations=True, max_new_tokens=500, temperature=0.7, top_p=0.9):
         set_global_seed(self.seed)
         history = history or []
 
