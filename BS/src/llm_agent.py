@@ -46,7 +46,7 @@ class LLMAgent:
         "9. The game ends when a player has zero cards and does not have to pick up the pile.\n"
     )
 
-    def __init__(self, name, model_name, model, tokenizer, seed=0, cot=False, log_dir=None, activation_stride=10):
+    def __init__(self, name, model_name, model, tokenizer, seed=0, cot=False, log_dir=None, activation_stride=20):
         self.name = name
         self.model_name = model_name
         self.model = model
@@ -91,16 +91,17 @@ class LLMAgent:
             return_tensors="pt"
         ).to(self.model.device)
         
-        self._init_activation_storage()
-        self._register_activation_hooks()
-
+        # Only initialize activation storage and register hooks when requested.
         if save_activations:
+            self._init_activation_storage()
+            self._register_activation_hooks()
+
             # store prompt input ids in activations dict (on CPU)
-            try:
-                self.activations["input_ids"] = inputs["input_ids"][0].detach().cpu()
-            except Exception:
-                # some wrappers return inputs as plain tensor
-                self.activations["input_ids"] = inputs[0].detach().cpu()
+            #try:
+            #    self.activations["input_ids"] = inputs["input_ids"][0].detach()
+            #except Exception:
+            #    # some wrappers return inputs as plain tensor
+            #    self.activations["input_ids"] = inputs[0].detach()
 
         # ---- GENERATE FAST ----
         # generate quickly with caching enabled (fast)
@@ -141,13 +142,35 @@ class LLMAgent:
                 )
             # outputs.hidden_states is tuple: (embedding_output, layer1_out, ..., layerN_out)
             # Convert to CPU and store in activations in a compact way (detach->cpu)
-            hidden_states = [h[0].detach().cpu().clone() for h in outputs.hidden_states]  # each h: (1, T, D)
+            hidden_states = [h[0].detach() for h in outputs.hidden_states]  # each h: (1, T, D)
+            
+            #hidden_states = [h.half() for h in hidden_states]
+
             # store hidden states under activations - make them numpy for small disk writes
-            self.activations["hidden_states_all_tokens"] = hidden_states  # list of tensors [ (T, D), ... ]
+            self.activations["hidden_states"] = hidden_states  # list of tensors [ (T, D), ... ]
+
+            #if "logits" in self.activations:
+            #    self.activations["logits"] = [
+            #        t.half() if t.is_floating_point() else t
+            #        for t in self.activations["logits"]
+            #    ]
 
         prompt_len = inputs.shape[1]
         generated_ids = out_ids[:, prompt_len:]
         gen_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+
+        # If activations were not requested, ensure we didn't leave hooks registered or activations lingering.
+        if not save_activations:
+            try:
+                self._remove_hooks()
+            except Exception:
+                pass
+            if hasattr(self, "activations"):
+                try:
+                    self.activations = None
+                    delattr(self, "activations")
+                except Exception:
+                    pass
 
         return gen_text
 
@@ -240,8 +263,8 @@ class LLMAgent:
     def _init_activation_storage(self):
         self.activations = {
             "hidden_states": {},   # key: "layer_5" -> list[(T, D)]
-            "mlp": {},             # key: "layer_5" -> list[(T, D)]
-            "attn": {},            # key: "layer_5" -> list[(T, D)]
+            #"mlp": {},             # key: "layer_5" -> list[(T, D)]
+            #"attn": {},            # key: "layer_5" -> list[(T, D)]
             "logits": [],
 
             # ✅ Always saved for auditability
@@ -273,7 +296,7 @@ class LLMAgent:
         def _append_named(storage_dict, name, tensor):
             if tensor is None:
                 return
-            t = tensor.detach().cpu()
+            t = tensor.detach()
             if name not in storage_dict:
                 storage_dict[name] = []
             storage_dict[name].append(t[0])  # (T, D)
@@ -315,6 +338,7 @@ class LLMAgent:
                 layer.register_forward_hook(make_hidden_hook(lname))
             )
 
+            """
             # ===== Attention Output =====
             attn_module = getattr(layer, "self_attn", None)
             if attn_module is not None:
@@ -330,6 +354,9 @@ class LLMAgent:
                     target_attn.register_forward_hook(make_attn_hook(lname))
                 )
 
+            """
+
+            """
             # ===== MLP Output =====
             mlp_module = getattr(layer, "mlp", None)
             if mlp_module is not None:
@@ -347,7 +374,7 @@ class LLMAgent:
                 self._hooks.append(
                     target_mlp.register_forward_hook(make_mlp_hook(lname))
                 )
-
+            """
         # ===== Logits (unchanged, token-wise) =====
         lm_head = getattr(self.model, "lm_head", None)
         final_target = lm_head or getattr(self.model, "final_layer", None)
@@ -356,7 +383,7 @@ class LLMAgent:
             def hook_logits_fallback(module, input, output):
                 t = self._tensor_from_hook_output(output)
                 if t is not None and t.ndim == 3:
-                    self.activations["logits"].append(t[0].detach().cpu())
+                    self.activations["logits"].append(t[0].detach())
 
             try:
                 self._hooks.append(
@@ -370,9 +397,9 @@ class LLMAgent:
                 if t is None:
                     return
                 if t.ndim == 3:
-                    self.activations["logits"].append(t[0].detach().cpu())
+                    self.activations["logits"].append(t[0].detach())
                 elif t.ndim == 2:
-                    self.activations["logits"].append(t.detach().cpu())
+                    self.activations["logits"].append(t.detach())
 
             self._hooks.append(
                 final_target.register_forward_hook(hook_logits)

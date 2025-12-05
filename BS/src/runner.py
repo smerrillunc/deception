@@ -13,9 +13,13 @@ from pathlib import Path
 import numpy as np
 import tqdm
 import torch
+import gzip
+import io
+import zstandard as zstd
+from pathlib import Path
 
 class GameRunner:
-    def __init__(self, deck_class, agent_class, num_players=2, max_steps=20, log_root="games"):
+    def __init__(self, deck_class, agent_class, num_players=2, max_steps=100, log_root="games"):
         self.deck_class = deck_class
         self.agent_class = agent_class
         self.num_players = num_players
@@ -68,7 +72,7 @@ class GameRunner:
         if existing:
             print(f"Skipping run_single_game for seed {seed}: snapshots already exist in {game_dir}")
             return None, []
-        while not env.game_over() and env.turn < self.max_steps:
+        while not env.game_over() and env.turn <= self.max_steps:
             summary_play, summary_challenge = env.step()
             snapshot = env.get_snapshot()
             
@@ -127,9 +131,9 @@ class GameRunner:
             #snapshots = []
 
             total_steps = 0
-            while not env.game_over() and env.turn < self.max_steps and total_steps < steps_per_sim:
+            while not env.game_over() and env.turn <= self.max_steps and total_steps < steps_per_sim:
                 # we want to save activations during MC sims
-                summary_play, summary_challenge = env.step()
+                summary_play, summary_challenge = env.step(save_activations=True)
                 snap = env.get_snapshot()
 
                 # this will be the player who just acted (not challenged or passed)
@@ -146,6 +150,7 @@ class GameRunner:
                 total_steps += 1
                 del snap
 
+            agents = None
             del env
             del agents
             gc.collect()
@@ -286,25 +291,111 @@ class GameRunner:
         np.save(output_name, actions)
         return actions
 
-    def _save_activations(self, env, game_dir, seed, current_idx):
-        """Save activations ONLY for the agent who just played."""
+    import torch
 
-        activations_dir = game_dir / "activations"
+    def _save_activations(self, env, game_dir, seed=None, current_idx=None,
+                        use_half=True, token_stride=1, kept_layers=None, compress=True):
+        """
+        Save activations efficiently using Zstandard compression, float16 conversion, and layer/token downsampling.
+
+        Args:
+            env: Environment containing agents.
+            game_dir: Base directory to save activations.
+            seed: Optional random seed, inferred from env if None.
+            current_idx: Optional agent index, inferred from env.turn if None.
+            use_half: Convert float tensors to float16 if True.
+            token_stride: Keep every N-th token (downsample) to reduce size.
+            kept_layers: List of layer indices to save (default: first + last layers).
+            compress: If True, use zstd compression.
+        """
+        activations_dir = Path(game_dir) / "activations"
         activations_dir.mkdir(exist_ok=True, parents=True)
+
+        # Infer current_idx and seed
+        if current_idx is None:
+            try:
+                current_idx = (env.turn - 1) % len(env.agents)
+            except Exception:
+                current_idx = 0
+        if seed is None:
+            seed = getattr(env, 'seed', 'unknown')
 
         current = env.agents[current_idx]
 
-        act_data = current.activations.copy()
+        acts = getattr(current, 'activations', None)
+        if not acts:
+            try:
+                current._remove_hooks()
+            except Exception:
+                pass
+            if hasattr(current, 'activations'):
+                try:
+                    current.activations = None
+                    delattr(current, 'activations')
+                except Exception:
+                    pass
+            return {}
 
-        act_data.update({
-            "agent_name": current.name,
-            "turn": env.turn - 1,   # the play that just happened
-            "hand": current._render_hand(),
-            "model_name": current.model_name,
-            "seed": current.seed
-        })
+        # ------------------- Process activations -------------------
+        processed_acts = {}
 
+        # Hidden states
+        hidden_states = acts.get("hidden_states", [])
+        if hidden_states:
+            # Select only kept layers
+            if kept_layers is None:
+                # default: first and last layers
+                kept_layers = [0, len(hidden_states)-1]
+            hidden_states = [hidden_states[i] for i in kept_layers if i < len(hidden_states)]
+
+            # Downsample tokens
+            if token_stride > 1:
+                hidden_states = [h[:, ::token_stride, :].contiguous() for h in hidden_states]
+
+            # Convert to float16
+            if use_half:
+                hidden_states = [h.half() for h in hidden_states]
+
+            processed_acts["hidden_states"] = hidden_states
+
+        # Logits
+        logits = acts.get("logits", [])
+        if logits:
+            if token_stride > 1:
+                logits = [l[::token_stride].contiguous() for l in logits]
+            if use_half:
+                logits = [l.half() if l.is_floating_point() else l for l in logits]
+            processed_acts["logits"] = logits
+
+        # Save metadata
+        for key in ["kept_layers", "activation_stride", "num_model_layers"]:
+            if key in acts:
+                processed_acts[key] = acts[key]
+
+        # ------------------- Save to disk -------------------
         save_path = activations_dir / f"seed_{seed}_agent_{current.name}.pt"
-        torch.save(act_data, save_path)
+        if compress:
+            save_path = str(save_path) + ".zst"
+            cctx = zstd.ZstdCompressor(level=3)
+            buf = io.BytesIO()
+            torch.save(processed_acts, buf)
+            compressed = cctx.compress(buf.getvalue())
+            with open(save_path, "wb") as f:
+                f.write(compressed)
+        else:
+            torch.save(processed_acts, save_path)
+
+        # ------------------- Cleanup -------------------
+        try:
+            current._remove_hooks()
+        except Exception:
+            pass
+        try:
+            current.activations = None
+            delattr(current, 'activations')
+        except Exception:
+            pass
+        torch.cuda.empty_cache()
+        gc.collect()
 
         return {current.name: str(save_path)}
