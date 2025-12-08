@@ -6,7 +6,6 @@ import json
 import random
 import argparse
 from pathlib import Path
-import tqdm
 
 # ---- Project Imports ----
 sys.path.append("/playpen-ssd/smerrill/deception/BS/src")
@@ -38,7 +37,7 @@ def parse_args():
     parser.add_argument(
         "--num_sims",
         type=int,
-        default=10,
+        default=20,
         help="Number of Monte Carlo sims per snapshot"
     )
 
@@ -73,14 +72,22 @@ def main():
     for game_seed in game_seeds:
         path = os.path.join(result_path, game_seed)
         turns = os.listdir(path)
-        turns = sorted([x for x in turns if x.endswith('.json')])
-
+        turns = [x for x in turns if x.endswith('.json')]
+        #turns = sorted([x for x in turns if x.endswith('.json')])
+        random.shuffle(turns)
         for turn_file in turns:
+            
+            output_name = os.path.join(path, 'truthful', turn_file).replace('.json', '.npy')
+            if os.path.exists(output_name):
+                print(f"Skipping existing output: {output_name}")
+                continue
+            else:
+                print(f"Running truthful simulation for Turn file: {os.path.join(path, turn_file)}")
+
             with open(os.path.join(path, turn_file), 'r') as f:
                 snapshot = json.load(f)
-            print(f"Turn file: {os.path.join(path, turn_file)}")
-            output_name = os.path.join(path, 'truthful', turn_file).replace('.json', '.npy')
             runner.run_truthful_trajectory(snapshot, num_sims=args.num_sims, output_name=output_name)
+
     print("\nTruthful batch completed successfully.")
 
 

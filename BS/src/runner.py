@@ -260,12 +260,12 @@ class GameRunner:
 
             # Do not write per-agent logs during MC sims
             agents = [LLMAgent(name=f"{c}",
-                                        model_name=model_names[c],
-                                        cot=cots[c],
-                                        model=self.models_dict[model_names[c]],
-                                        tokenizer=self.tokenizers_dict[model_names[c]],
-                                        seed=seed,
-                                        log_dir=None)
+                    model_name=model_names[c],
+                    cot=cots[c],
+                    model=self.models_dict[model_names[c]],
+                    tokenizer=self.tokenizers_dict[model_names[c]],
+                    seed=seed,
+                    log_dir=None)
                         for c in range(num_players)]
             
             env = BSEnvironment.from_snapshot(snapshot, agents, deck, log_dir=None)
@@ -276,12 +276,46 @@ class GameRunner:
             opponent = env.agents[opponent_idx]
 
             # --- Challenge Prompt Construction ---
-            challenge_prompt = env._make_challenge_prompt(opponent, env.last_play[-2], current)
-            history = env._get_full_history()
 
-            # Add truthful message for other player
-            history[-1]['content'] += f"\nPlayer {current.name} played 0 card(s), claiming rank {env.current_rank}."
-            full_challenge_history = env._merge_history_and_prompt(history, challenge_prompt)
+            game_history = snapshot['full_play_history']
+            game_history = sorted(game_history, key=lambda x: x['ts'])
+
+            # remove the last two entried
+            game_history = game_history[:-2]
+
+            # opponent hand is the player on the next turn
+            # player name is opponent on last turn
+            player = snapshot['last_play'][-1]['player']
+            hand = snapshot['last_play'][-2]['opponent_hand_str']
+
+            # current rank is the rank for this turn
+            current_rank = snapshot['current_rank']
+
+            # a truthful aciton
+            action = GameRunner.play_matching_cards(hand, current_rank)
+            last_ts = snapshot['last_play'][-1]['ts']
+
+            pile = snapshot.get('pile',[])
+            card_indices = action.get("Card_idx", [])
+            #card_indices = [0, 1]
+            played_cards = [hand[i] for i in card_indices if i < len(hand)]
+
+            for c in played_cards:
+                if c in hand:
+                    hand.remove(c)
+                pile.append(c)
+
+            summary_play = f"Player {player} played {len(played_cards)} card(s), claiming rank {current_rank}."
+            game_history.append({'player':player,
+                'content':summary_play,
+                'ts':last_ts+1})
+
+            last_play = {"played_cards": played_cards}
+
+            # --- Challenge Prompt Construction ---
+            challenge_prompt = env._make_challenge_prompt(opponent, last_play, current)
+
+            full_challenge_history =BSEnvironment._merge_history_and_prompt(BSEnvironment._get_truncated_history(game_history), challenge_prompt)
 
             # we are just measuring if opponent's action distribution changes, so no need to save_activations
             challenge_action = opponent.act(full_challenge_history, save_activations=False)
@@ -292,6 +326,44 @@ class GameRunner:
         return actions
 
     import torch
+
+    @staticmethod
+    def play_matching_cards(hand, current_rank):
+        """
+        Deterministic function to act truthfully by playing all cards in hand that match the current rank.
+        return the reasoning and which card indices match that rank.
+        """
+
+        current_rank_str = str(current_rank)
+
+        # Extract matching card indices and values
+        matching = [
+            (i, card) for i, card in enumerate(hand)
+            if card[:-1] == current_rank_str
+        ]
+
+        matching_indices = [idx for idx, _ in matching]
+        matching_cards = [card for _, card in matching]
+
+        # Build reasoning
+        if matching_indices:
+            reasoning = (
+                f"The current rank is {current_rank}. My hand has the following cards "
+                f"that match the current rank: {matching_cards}, so I will play truthfully "
+                f"and only play these cards"
+            )
+        else:
+            reasoning = (
+                f"The current rank is {current_rank}. My hand has no cards that match "
+                f"the current rank so I will act truthfully and play no cards"
+            )
+
+        return {
+            "Reasoning": reasoning,
+            "Action": "Play",
+            "Card_idx": matching_indices
+        }
+
 
     def _save_activations(self, env, game_dir, seed=None, current_idx=None,
                         use_half=True, token_stride=1, kept_layers=None, compress=True):

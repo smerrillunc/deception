@@ -37,7 +37,7 @@ echo ""
 # Extra arguments for Python
 # ---------------------------
 echo ""
-read -p "Extra args for mc_run_script.py (or press Enter for none): " EXTRA_ARGS
+read -p "Extra args for run_truthful_script.py (or press Enter for none): " EXTRA_ARGS
 
 # ---------------------------
 # Paths
