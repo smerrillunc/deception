@@ -70,6 +70,12 @@ def main():
         random.shuffle(game_seeds)
 
     print(f"Found {len(game_seeds)} game seeds")
+    runner = GameRunner(
+        deck_class=Deck,
+        agent_class=LLMAgent,
+        log_root=log_root,
+        max_steps=101
+    )
 
     for game_seed in tqdm.tqdm(game_seeds, desc="Game Seeds"):
         gc.collect()
@@ -89,12 +95,6 @@ def main():
         random.shuffle(turn_files)
 
         for turn_file in turn_files:
-            runner = GameRunner(
-                deck_class=Deck,
-                agent_class=LLMAgent,
-                log_root=log_root
-            )
-
 
             turn_path = seed_path / turn_file
 
@@ -113,8 +113,8 @@ def main():
                 snapshot=snapshot,
                 num_sims=args.num_sims
             )
-            
-            del runner
+            #runner = None
+            #del runner
             gc.collect()
             torch.cuda.empty_cache()    
             torch.cuda.ipc_collect()

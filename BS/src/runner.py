@@ -133,14 +133,17 @@ class GameRunner:
             total_steps = 0
             while not env.game_over() and env.turn <= self.max_steps and total_steps < steps_per_sim:
                 # we want to save activations during MC sims
-                summary_play, summary_challenge = env.step(save_activations=True)
+
+                # NO LONGER SAVING ACTIVATIONS
+                summary_play, summary_challenge = env.step(save_activations=False)
                 snap = env.get_snapshot()
 
                 # this will be the player who just acted (not challenged or passed)
                 current_idx = (env.turn - 1) % len(env.agents)
-                act_filepaths = self._save_activations(env, sim_dir, seed, current_idx)
-                snap['activations'] = act_filepaths
-
+                
+                # NO LONGER SAVING ACTIVATIONS
+                #act_filepaths = self._save_activations(env, sim_dir, seed, current_idx)
+                #snap['activations'] = act_filepaths
                 #snapshots.append(snap)
             
                 # save snapshot into the per-sim folder
@@ -315,7 +318,7 @@ class GameRunner:
             # --- Challenge Prompt Construction ---
             challenge_prompt = env._make_challenge_prompt(opponent, last_play, current)
 
-            full_challenge_history =BSEnvironment._merge_history_and_prompt(BSEnvironment._get_truncated_history(game_history), challenge_prompt)
+            full_challenge_history = BSEnvironment._merge_history_and_prompt(BSEnvironment._get_truncated_history(game_history), challenge_prompt)
 
             # we are just measuring if opponent's action distribution changes, so no need to save_activations
             challenge_action = opponent.act(full_challenge_history, save_activations=False)
@@ -366,7 +369,7 @@ class GameRunner:
 
 
     def _save_activations(self, env, game_dir, seed=None, current_idx=None,
-                        use_half=True, token_stride=1, kept_layers=None, compress=True):
+                        use_half=True, token_stride=1, compress=True):
         """
         Save activations efficiently using Zstandard compression, float16 conversion, and layer/token downsampling.
 
@@ -415,9 +418,11 @@ class GameRunner:
         hidden_states = acts.get("hidden_states", [])
         if hidden_states:
             # Select only kept layers
-            if kept_layers is None:
+            if acts.kept_layers is None:
                 # default: first and last layers
                 kept_layers = [0, len(hidden_states)-1]
+            else:
+                kept_layers = acts.kept_layers
             hidden_states = [hidden_states[i] for i in kept_layers if i < len(hidden_states)]
 
             # Downsample tokens

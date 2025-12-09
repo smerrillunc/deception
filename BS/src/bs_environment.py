@@ -1,3 +1,4 @@
+from multiprocessing.util import debug
 import time, os, sys
 sys.path.append("/playpen-ssd/smerrill/deception/BS/src")
 from utils import write_json, append_jsonl, ensure_dir
@@ -50,6 +51,7 @@ class BSEnvironment:
         full_play_history = BSEnvironment._merge_history_and_prompt(BSEnvironment._get_truncated_history(self._build_full_history()), play_prompt)
         
         play_action = current.act(history=full_play_history, save_activations=save_activations)
+
         card_indices = play_action.get("Card_idx", [])
         played_cards = [current.hand[i] for i in card_indices if i < len(current.hand)]
         played_cards_ranks = [Card.get_rank_int(c) for c in played_cards]
@@ -68,6 +70,7 @@ class BSEnvironment:
             "opponent_hand": opponent_hand,
             "opponent_hand_str": opponent_hand_str,
             "current_pile": current_pile,
+            "prompt": full_play_history,
             "action": play_action,
             "played_cards": played_cards,
             "played_cards_str": [Card.int_to_str(x) for x in played_cards],
@@ -80,13 +83,11 @@ class BSEnvironment:
         summary_play = f"Player {current.name} played {len(played_cards)} card(s), claiming rank {self.current_rank}."
         self._append_to_history(current, summary_play)
 
-        # --- CHALLENGE ---
         challenge_prompt = self._make_challenge_prompt(opponent, self.last_play[-1], current)
         
 
-
         full_challenge_history = self._merge_history_and_prompt(BSEnvironment._get_truncated_history(self._build_full_history()), challenge_prompt)
-        
+
         # don't need to save_activations for challenge step
         challenge_action = opponent.act(history=full_challenge_history, save_activations=False)
         challenge_type = challenge_action.get("Action", "Pass")
@@ -107,6 +108,7 @@ class BSEnvironment:
         # Append challenge to last_play
         self.last_play.append({
             "player": opponent.name,
+            "prompt": full_challenge_history,
             "action": challenge_action,
             "ts": time.time()
         })
@@ -114,10 +116,18 @@ class BSEnvironment:
         self._append_to_history(opponent, summary_challenge)
 
         if debug:
-            print("Play Turn:")
-            print(json.dumps(self.last_play[-2], indent=2))
-            print("Challenge Turn:")
-            print(json.dumps(self.last_play[-1], indent=2))
+            print('------------------ PLAY PROMPT ------------------')
+            print(full_play_history[0]['content'])
+            
+            print('------------------ PLAY ACTION ------------------')
+            print(play_action)
+
+            print('------------------ CHALLENGE PROMPT ------------------')
+            print(full_challenge_history[0]['content'])    
+            
+            print('------------------ CHALLENGE ACTION ------------------')
+            print(challenge_action)
+
         # --- Increment turn ---
         self.turn += 1
         #self.current_rank = (self.current_rank + 1) % 13

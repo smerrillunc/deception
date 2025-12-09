@@ -39,7 +39,7 @@ def load_model_and_tokenizer(model_name, max_seq_length=4000, device_map="auto")
         max_seq_length=max_seq_length,
         load_in_4bit=True,
         fix_tokenizer=True,
-        offload_folder="/playpen-ssd/smerrill/offload", 
+        #offload_folder="/playpen-ssd/smerrill/offload", 
     ) 
     if 'llama' in model_name.lower():
         tokenizer = get_chat_template(
