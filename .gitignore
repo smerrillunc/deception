@@ -8,6 +8,7 @@ __pycache__/
 # JSON / JSONL files
 *.json
 *.jsonl
+!dashboard/*.json
 
 # Lock files / directories
 .locks/
