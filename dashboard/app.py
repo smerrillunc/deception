@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
-BASE_DIR = os.path.join(os.path.dirname(__file__), 'results')
+BASE_DIR = os.path.join(os.path.dirname(__file__))
 RESULTS_PATH = os.path.join(BASE_DIR, "results")
 
 def list_game_seeds(result_path):
